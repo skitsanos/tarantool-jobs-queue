@@ -27,7 +27,8 @@ end)
 server:route({ path = '/jobs', method = 'GET' }, function(req)
     local limit = tonumber(req:query_param('limit')) or 50
     local offset = tonumber(req:query_param('offset')) or 0
-    local total, jobs_data = jobs_manager.list_all_jobs(limit, offset)
+    local status = req:query_param('status') -- This will be nil if not provided
+    local total, jobs_data = jobs_manager.list_all_jobs(limit, offset, status)
     local response = {
         total = total,
         limit = limit,

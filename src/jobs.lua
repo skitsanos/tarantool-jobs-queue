@@ -37,11 +37,21 @@ function jobs.new(space_name)
         return job_id
     end
 
-    function self.list_all_jobs(limit, offset)
+    function self.list_all_jobs(limit, offset, status)
         limit = limit or 50  -- Default limit is 50
         offset = offset or 0 -- Default offset is 0
-        local result_set = self.space:select(nil, { limit = limit, offset = offset })
-        local total = self.space:count()
+
+        local result_set
+        local total
+
+        if status then
+            result_set = self.space.index.primary:select(status, { limit = limit, offset = offset })
+            total = #self.space.index.primary:select(status)
+        else
+            result_set = self.space:select(nil, { limit = limit, offset = offset })
+            total = self.space:count()
+        end
+
         return total, result_set
     end
 
