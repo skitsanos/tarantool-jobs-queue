@@ -1,0 +1,15 @@
+version: '3'
+
+services:
+  tarantool1:
+    image: tarantool/tarantool:latest
+    command: tarantool /app/server.lua
+    volumes:
+      - ./src:/app
+    environment:
+      TARANTOOL_WORK_DIR: /data/tarantool1
+      TARANTOOL_CONSOLE_SOCK: /var/run/tarantool/console.sock
+      TARANTOOL_ADVERTISE_URI: '0.0.0.0:3301'
+    ports:
+      - "3000:3000"
+      - "3301:3301"
