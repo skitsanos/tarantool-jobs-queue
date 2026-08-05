@@ -37,6 +37,30 @@ local VALID_STATUS = {
     [STATUS.failed] = true,
 }
 
+local EXPECTED_FIELDS = {
+    'job_id',
+    'status',
+    'payload',
+    'created_at',
+    'updated_at',
+    'available_at',
+    'lease_until',
+    'attempts',
+    'max_attempts',
+    'last_error',
+    'idempotency_key',
+    'lease_token',
+}
+
+local REQUIRED_INDEXES = {
+    'primary',
+    'status',
+    'created_at',
+    'ready',
+    'lease',
+    'idempotency',
+}
+
 local function nullable(value)
     if value == nil then
         return box.NULL
@@ -67,6 +91,28 @@ end
 
 local function is_due(job, now)
     return job ~= nil and job[FIELD.available_at] <= now
+end
+
+local function schema_is_ready(space_name, space)
+    if space == nil or migrations.get_version(space_name) ~= migrations.CURRENT_VERSION then
+        return false
+    end
+
+    local format = space:format()
+    if #format ~= #EXPECTED_FIELDS then
+        return false
+    end
+    for field_number, field_name in ipairs(EXPECTED_FIELDS) do
+        if format[field_number].name ~= field_name then
+            return false
+        end
+    end
+    for _, index_name in ipairs(REQUIRED_INDEXES) do
+        if space.index[index_name] == nil then
+            return false
+        end
+    end
+    return true
 end
 
 function jobs.is_valid_status(status)
@@ -355,6 +401,56 @@ function jobs.new(space_name, options)
 
     function self.delete_job_by_id(job_id)
         return job_to_table(self.space:delete(job_id))
+    end
+
+    function self.readiness()
+        local current_schema_version = migrations.get_version(space_name)
+        local schema_ready = schema_is_ready(space_name, self.space)
+        local writable = box.info.ro == false
+        local write_probe = false
+        local write_error
+
+        if schema_ready and writable then
+            local transaction_started = false
+            local probe_ok, probe_error = pcall(function()
+                box.begin()
+                transaction_started = true
+                local now = clock.time()
+                self.space:insert({
+                    uuid.str(),
+                    STATUS.pending,
+                    { health_check = true },
+                    now,
+                    now,
+                    now,
+                    box.NULL,
+                    0,
+                    1,
+                    box.NULL,
+                    box.NULL,
+                    box.NULL,
+                })
+                box.rollback()
+                transaction_started = false
+            end)
+            if transaction_started then
+                pcall(box.rollback)
+            end
+            write_probe = probe_ok
+            if not probe_ok then
+                write_error = tostring(probe_error)
+            end
+        end
+
+        return {
+            ready = schema_ready and writable and write_probe,
+            schema_ready = schema_ready,
+            schema_version = current_schema_version,
+            expected_schema_version = migrations.CURRENT_VERSION,
+            writable = writable,
+            write_probe = write_probe,
+            write_error = write_error,
+        }
     end
 
     return self

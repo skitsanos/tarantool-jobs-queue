@@ -38,7 +38,8 @@ function Invoke-LintSuite {
         $HurlImage `
         --check `
         /workspace/tests/new-job.hurl `
-        /workspace/tests/get-jobs.hurl
+        /workspace/tests/get-jobs.hurl `
+        /workspace/tests/restart-recovery.hurl
 }
 
 function Invoke-UnitSuite {
@@ -123,17 +124,18 @@ function Invoke-HttpSuite {
             $restartFixture = $restartFixtureJson | ConvertFrom-Json
             Start-Sleep -Milliseconds 300
             Invoke-Docker restart $containerName | Out-Null
-            Start-Sleep -Seconds 5
 
-            & pwsh `
-                -NoProfile `
-                -File (Join-Path $PSScriptRoot 'restart-recovery-verify.ps1') `
-                -BaseUri $baseUri `
-                -JobId $restartFixture.job_id `
-                -FirstLeaseToken $restartFixture.lease_token
-            if ($LASTEXITCODE -ne 0) {
-                throw "Restart verification failed with exit code $LASTEXITCODE."
-            }
+            Invoke-Docker run --rm `
+                --network "container:$containerName" `
+                --volume $RepositoryMount `
+                $HurlImage `
+                --test `
+                --retry 30 `
+                --retry-interval 500 `
+                --variables-file /workspace/tests/.vars `
+                --variable "job_id=$($restartFixture.job_id)" `
+                --variable "first_lease_token=$($restartFixture.lease_token)" `
+                /workspace/tests/restart-recovery.hurl
         }
 
         $suitePassed = $true

@@ -1,3 +1,22 @@
+GET http://localhost:{{PORT}}/health/live
+HTTP 200
+Content-Type: application/json; charset=utf-8
+[Asserts]
+jsonpath "$.status" == "ok"
+
+
+GET http://localhost:{{PORT}}/health/ready
+HTTP 200
+Content-Type: application/json; charset=utf-8
+[Asserts]
+jsonpath "$.status" == "ok"
+jsonpath "$.checks.schema.ready" == true
+jsonpath "$.checks.schema.version" == 3
+jsonpath "$.checks.schema.expected_version" == 3
+jsonpath "$.checks.storage.writable" == true
+jsonpath "$.checks.storage.write_probe" == true
+
+
 GET http://localhost:{{PORT}}/jobs?limit=25
 HTTP 200
 Content-Type: application/json; charset=utf-8

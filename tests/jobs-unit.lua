@@ -60,6 +60,26 @@ local function run()
     assert_equal(replayed.job_id, first.job_id, 'replayed job identity')
     assert_equal(manager.space:count(), 1, 'idempotency must keep one tuple')
 
+    local count_before_readiness = manager.space:count()
+    local readiness = manager.readiness()
+    assert_equal(readiness.ready, true, 'queue readiness')
+    assert_equal(readiness.schema_ready, true, 'readiness schema check')
+    assert_equal(readiness.schema_version, 3, 'readiness schema version')
+    assert_equal(readiness.writable, true, 'readiness writable check')
+    assert_equal(readiness.write_probe, true, 'readiness write probe')
+    assert_equal(
+        manager.space:count(),
+        count_before_readiness,
+        'readiness probe must roll back its tuple'
+    )
+
+    box.cfg({ read_only = true })
+    local read_only_readiness = manager.readiness()
+    box.cfg({ read_only = false })
+    assert_equal(read_only_readiness.ready, false, 'read-only queue readiness')
+    assert_equal(read_only_readiness.writable, false, 'read-only writable check')
+    assert_equal(read_only_readiness.write_probe, false, 'read-only write probe')
+
     local delayed = manager.create_job({ kind = 'delayed' }, {
         delay = 0.2,
         max_attempts = 2,

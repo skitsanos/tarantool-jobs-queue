@@ -12,6 +12,16 @@ tasks:
       - docker pull tarantool/tarantool:3.8.0
       - docker pull ghcr.io/orange-opensource/hurl:8.0.1
 
+  install:
+    desc: Install the application dependencies declared by the rockspec
+    cmds:
+      - tt rocks make tarantool-jobs-queue-scm-1.rockspec
+
+  run:
+    desc: Start the Tarantool jobs queue API
+    cmds:
+      - tarantool src/server.lua
+
   lint:
     desc: Check Lua sources and Hurl formatting
     cmds:

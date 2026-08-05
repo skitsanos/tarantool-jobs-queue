@@ -7,6 +7,7 @@ A persistent jobs queue implemented as a Tarantool Lua application and exposed o
 Runtime:
 
 - Tarantool
+- A C compiler toolchain and `unzip` for building native rocks
 - The Tarantool `http` rock, version `1.9.0-1`
 
 Development and CI:
@@ -22,9 +23,12 @@ The application includes a rockspec declaring its Lua dependencies.
 Install the HTTP dependency and start the application:
 
 ```shell
-tt rocks install http 1.9.0-1
-tarantool src/server.lua
+task install
+task run
 ```
+
+Without Task, run `tt rocks make tarantool-jobs-queue-scm-1.rockspec` and then
+`tarantool src/server.lua`.
 
 Configuration is available through environment variables:
 
@@ -132,6 +136,13 @@ Cursors are bound to the selected status. If the cursor job is deleted or moves 
 | `POST /jobs/:id/retry` | Reset a failed job to pending | `200`, `404`, or `409` |
 | `DELETE /jobs/:id` | Delete a job idempotently | `204` |
 | `GET /version` | Return API and schema versions | `200` |
+| `GET /health/live` | Confirm that the HTTP process is serving requests | `200` |
+| `GET /health/ready` | Verify schema state and rolled-back write availability | `200` or `503` |
+
+`GET /health/live` is intentionally independent of database state. `GET /health/ready`
+returns `200` only when the jobs space is at the expected migration version, its fields
+and indexes are present, the Tarantool instance is not read-only, and a transactional
+insert succeeds. The probe transaction is rolled back and does not create a queue job.
 
 Example job:
 
@@ -192,9 +203,10 @@ Without Task, invoke `pwsh -NoProfile -File tests/run.ps1 -Suite All` (or use
 `Lint`, `Unit`, or `Http`). The unit suite exercises storage, lifecycle transitions,
 leases, fencing, retries, pagination, and versioned migration directly in Tarantool.
 The HTTP suite runs Hurl contracts plus concurrency, idempotency, cursor, retry, and
-restart-recovery scenarios. GitHub Actions runs the same `All` suite on every pull
-request and every push to `main`. Docker Desktop on Windows skips the container-restart
-scenario because its native restart command can block the calling PowerShell process;
+restart-recovery scenarios. The Linux restart check verifies the restarted service over
+container-local networking with bounded startup retries. GitHub Actions runs the same
+`All` suite on every pull request and every push to `main`. Docker Desktop on Windows
+skips the container-restart scenario because its native restart command can block the calling PowerShell process;
 Linux CI always runs that scenario.
 
 ## Delivery semantics

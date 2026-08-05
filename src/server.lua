@@ -145,6 +145,30 @@ server:route({ path = '/version', method = 'GET' }, function()
     })
 end)
 
+server:route({ path = '/health/live', method = 'GET' }, function()
+    return json_response(200, {
+        status = 'ok',
+    })
+end)
+
+server:route({ path = '/health/ready', method = 'GET' }, function()
+    local readiness = jobs_manager.readiness()
+    return json_response(readiness.ready and 200 or 503, {
+        status = readiness.ready and 'ok' or 'not_ready',
+        checks = {
+            schema = {
+                ready = readiness.schema_ready,
+                version = readiness.schema_version,
+                expected_version = readiness.expected_schema_version,
+            },
+            storage = {
+                writable = readiness.writable,
+                write_probe = readiness.write_probe,
+            },
+        },
+    })
+end)
+
 server:route({ path = '/jobs', method = 'POST' }, function(req)
     local payload, payload_error = parse_json_object(req)
     if payload_error ~= nil then
