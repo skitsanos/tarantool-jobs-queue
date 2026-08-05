@@ -4,10 +4,16 @@ A persistent jobs queue implemented as a Tarantool Lua application and exposed o
 
 ## Requirements
 
+Runtime:
+
 - Tarantool
 - The Tarantool `http` rock, version `1.9.0-1`
-- Hurl for HTTP contract tests
-- PowerShell for the concurrency, lease, retry, and cursor tests
+
+Development and CI:
+
+- Docker
+- PowerShell 7
+- Task (optional, for the short commands below)
 
 The application includes a rockspec declaring its Lua dependencies.
 
@@ -166,25 +172,30 @@ The current jobs schema version is `3`. The version is stored in Tarantool's `_s
 
 ## Tests
 
-Run the API against a database with no pre-existing pending jobs, then execute:
+The complete test harness uses pinned Tarantool and Hurl images. It creates an ephemeral
+database and API container, waits for schema readiness, runs every check sequentially,
+prints server logs on failure, and removes the container afterward:
 
 ```powershell
-hurl --test --jobs 1 --variables-file tests/.vars tests/new-job.hurl tests/get-jobs.hurl
-pwsh -File tests/cursor-pagination.ps1
-pwsh -File tests/concurrent-claim.ps1
-pwsh -File tests/concurrent-idempotency.ps1
-pwsh -File tests/lease-retry.ps1
-pwsh -File tests/restart-recovery.ps1 -ContainerName <running-container>
+task test
 ```
 
-The migration test runs directly in Tarantool and constructs a legacy schema before upgrading it:
+Focused commands are available for faster iteration:
 
 ```powershell
-docker run --rm -v "$($PWD.Path):/workspace" -w /tmp `
-  --entrypoint env tarantool/tarantool:latest `
-  -u TT_APP_NAME -u TT_INSTANCE_NAME `
-  tarantool /workspace/tests/schema-migrations.lua
+task lint
+task test:unit
+task test:http
 ```
+
+Without Task, invoke `pwsh -NoProfile -File tests/run.ps1 -Suite All` (or use
+`Lint`, `Unit`, or `Http`). The unit suite exercises storage, lifecycle transitions,
+leases, fencing, retries, pagination, and versioned migration directly in Tarantool.
+The HTTP suite runs Hurl contracts plus concurrency, idempotency, cursor, retry, and
+restart-recovery scenarios. GitHub Actions runs the same `All` suite on every pull
+request and every push to `main`. Docker Desktop on Windows skips the container-restart
+scenario because its native restart command can block the calling PowerShell process;
+Linux CI always runs that scenario.
 
 ## Delivery semantics
 

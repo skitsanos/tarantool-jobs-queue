@@ -1,0 +1,45 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Run all project checks
+    cmds:
+      - task: test
+
+  setup:
+    desc: Pull the pinned images used by the test harness
+    cmds:
+      - docker pull tarantool/tarantool:3.8.0
+      - docker pull ghcr.io/orange-opensource/hurl:8.0.1
+
+  lint:
+    desc: Check Lua sources and Hurl formatting
+    cmds:
+      - cmd: powershell -NoProfile -File tests/run.ps1 -Suite Lint
+        platforms: [windows]
+      - cmd: pwsh -NoProfile -File tests/run.ps1 -Suite Lint
+        platforms: [linux, darwin]
+
+  test:unit:
+    desc: Run storage, state-transition, and migration tests
+    cmds:
+      - cmd: powershell -NoProfile -File tests/run.ps1 -Suite Unit
+        platforms: [windows]
+      - cmd: pwsh -NoProfile -File tests/run.ps1 -Suite Unit
+        platforms: [linux, darwin]
+
+  test:http:
+    desc: Run HTTP contracts and integration scenarios in an isolated database
+    cmds:
+      - cmd: powershell -NoProfile -File tests/run.ps1 -Suite Http
+        platforms: [windows]
+      - cmd: pwsh -NoProfile -File tests/run.ps1 -Suite Http
+        platforms: [linux, darwin]
+
+  test:
+    desc: Run lint, unit, contract, concurrency, and restart checks
+    cmds:
+      - cmd: powershell -NoProfile -File tests/run.ps1 -Suite All
+        platforms: [windows]
+      - cmd: pwsh -NoProfile -File tests/run.ps1 -Suite All
+        platforms: [linux, darwin]

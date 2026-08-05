@@ -32,6 +32,9 @@ These instructions apply to the entire repository.
 
 ## Validation
 
+- Prefer `task test` for the complete isolated validation suite.
+- Run focused suites with `task lint`, `task test:unit`, or `task test:http`.
+- Docker Desktop on Windows skips restart recovery; Linux CI owns that scenario.
 - Format-check Hurl files with `hurlfmt --check tests/*.hurl`.
 - Run HTTP contracts against a clean database with:
   `hurl --test --jobs 1 --variables-file tests/.vars tests/*.hurl`.

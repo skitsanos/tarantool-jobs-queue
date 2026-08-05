@@ -114,3 +114,23 @@ Content-Type: application/json; charset=utf-8
 [Asserts]
 jsonpath "$.status" == "done"
 jsonpath "$.lease_until" == null
+
+
+# Verify the terminal representation, then remove the fixture so this file is rerunnable.
+GET http://localhost:{{PORT}}/jobs/{{job_id}}
+HTTP 200
+Content-Type: application/json; charset=utf-8
+[Asserts]
+jsonpath "$.status" == "done"
+jsonpath "$.attempts" == 1
+
+
+DELETE http://localhost:{{PORT}}/jobs/{{job_id}}
+HTTP 204
+
+
+GET http://localhost:{{PORT}}/jobs/{{job_id}}
+HTTP 404
+Content-Type: application/json; charset=utf-8
+[Asserts]
+jsonpath "$.error.code" == "job_not_found"

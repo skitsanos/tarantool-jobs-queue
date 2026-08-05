@@ -277,7 +277,7 @@ function jobs.new(space_name, options)
 
     function self.ack_job(job_id, lease_token)
         return box.atomic(function()
-            local job, job_error = get_in_progress_job(job_id, lease_token)
+            local _, job_error = get_in_progress_job(job_id, lease_token)
             if job_error ~= nil then
                 return nil, job_error
             end
