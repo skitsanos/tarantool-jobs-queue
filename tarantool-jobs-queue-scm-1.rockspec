@@ -20,6 +20,8 @@ dependencies = {
 build = {
     type = 'builtin',
     modules = {
+        auth = 'src/auth.lua',
+        persistence = 'src/persistence.lua',
         jobs = 'src/jobs.lua',
         migrations = 'src/migrations.lua',
     },

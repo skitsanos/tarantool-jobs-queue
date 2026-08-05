@@ -1,15 +1,30 @@
-version: '3'
-
 services:
   tarantool1:
-    image: tarantool/tarantool:latest
-    command: tarantool /app/server.lua
-    volumes:
-      - ./src:/app
+    build:
+      context: .
+    image: ${TARANTOOL_JOBS_IMAGE:-tarantool-jobs-queue:local}
+    restart: unless-stopped
+    stop_grace_period: 30s
     environment:
-      TARANTOOL_WORK_DIR: /data/tarantool1
-      TARANTOOL_CONSOLE_SOCK: /var/run/tarantool/console.sock
-      TARANTOOL_ADVERTISE_URI: '0.0.0.0:3301'
+      API_BEARER_TOKEN: ${API_BEARER_TOKEN:?Set API_BEARER_TOKEN to a secret of at least 32 characters}
+      HTTP_HOST: '0.0.0.0'
+      TARANTOOL_CHECKPOINT_COUNT: ${TARANTOOL_CHECKPOINT_COUNT:-2}
+      TARANTOOL_CHECKPOINT_INTERVAL: ${TARANTOOL_CHECKPOINT_INTERVAL:-3600}
+      TARANTOOL_DATA_DIR: /var/lib/tarantool
+      TARANTOOL_LISTEN: '127.0.0.1:3301'
+      TARANTOOL_WAL_MODE: ${TARANTOOL_WAL_MODE:-fsync}
+    healthcheck:
+      test: ["CMD", "env", "-u", "TT_APP_NAME", "-u", "TT_INSTANCE_NAME", "tarantool", "/app/healthcheck.lua"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
     ports:
-      - "3000:3000"
-      - "3301:3301"
+      - "${HTTP_PUBLISH_ADDRESS:-127.0.0.1}:${HTTP_PUBLISH_PORT:-3000}:3000"
+    volumes:
+      - jobs-data:/var/lib/tarantool
+
+volumes:
+  jobs-data:
+    labels:
+      com.skitsanos.tarantool-jobs-queue.description: Persistent queue snapshots and WAL

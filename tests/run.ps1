@@ -39,11 +39,17 @@ function Invoke-LintSuite {
         --check `
         /workspace/tests/new-job.hurl `
         /workspace/tests/get-jobs.hurl `
-        /workspace/tests/restart-recovery.hurl
+        /workspace/tests/restart-recovery.hurl `
+        /workspace/tests/security.hurl
 }
 
 function Invoke-UnitSuite {
-    foreach ($testFile in @('jobs-unit.lua', 'schema-migrations.lua')) {
+    foreach ($testFile in @(
+        'auth-unit.lua',
+        'persistence-unit.lua',
+        'jobs-unit.lua',
+        'schema-migrations.lua'
+    )) {
         Write-Output "Running $testFile..."
         Invoke-Docker run --rm `
             --volume $RepositoryMount `
@@ -53,6 +59,95 @@ function Invoke-UnitSuite {
             -u TT_APP_NAME `
             -u TT_INSTANCE_NAME `
             tarantool "/workspace/tests/$testFile"
+    }
+}
+
+function Invoke-AuthSuite {
+    $containerName = 'tarantool-jobs-queue-auth-test-' + [guid]::NewGuid().ToString('N')
+    $bearerToken = 'test-only-bearer-token-32-characters'
+    $containerStarted = $false
+    $suitePassed = $false
+
+    try {
+        Write-Output 'Checking fail-fast authentication configuration...'
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $misconfigurationOutput = & docker run --rm `
+                --env 'API_BEARER_TOKEN=too-short' `
+                --volume $RepositoryMount `
+                --workdir /tmp `
+                --entrypoint env `
+                $TarantoolImage `
+                -u TT_APP_NAME `
+                -u TT_INSTANCE_NAME `
+                tarantool /workspace/src/server.lua 2>&1
+            $misconfigurationExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        if ($misconfigurationExitCode -eq 0 `
+            -or ($misconfigurationOutput -join "`n") -notlike '*API_BEARER_TOKEN must contain*') {
+            throw 'Invalid bearer configuration did not stop server startup with a clear error.'
+        }
+
+        Write-Output "Starting authenticated API container $containerName..."
+        Invoke-Docker run --detach `
+            --name $containerName `
+            --publish '127.0.0.1::3000' `
+            --env "API_BEARER_TOKEN=$bearerToken" `
+            --env 'HTTP_HOST=0.0.0.0' `
+            --volume $RepositoryMount `
+            --workdir /tmp `
+            --entrypoint sh `
+            $TarantoolImage `
+            /workspace/tests/start-test-server.sh | Out-Null
+        $containerStarted = $true
+
+        $portOutput = & docker port $containerName '3000/tcp'
+        if ($LASTEXITCODE -ne 0 -or $portOutput -notmatch ':(\d+)$') {
+            throw 'Unable to resolve the authenticated test server port.'
+        }
+        $baseUri = "http://127.0.0.1:$($Matches[1])"
+
+        $deadline = (Get-Date).AddMinutes(3)
+        do {
+            try {
+                $liveness = Invoke-RestMethod -Uri "$baseUri/health/live" -TimeoutSec 2
+                if ($liveness.status -eq 'ok') {
+                    break
+                }
+            }
+            catch {
+                Start-Sleep -Seconds 1
+            }
+        } while ((Get-Date) -lt $deadline)
+        if ($null -eq $liveness -or $liveness.status -ne 'ok') {
+            throw 'The authenticated test API did not become live within three minutes.'
+        }
+
+        Write-Output 'Running bearer authentication contracts...'
+        Invoke-Docker run --rm `
+            --network "container:$containerName" `
+            --volume $RepositoryMount `
+            $HurlImage `
+            --test `
+            --variables-file /workspace/tests/.vars `
+            --variable "bearer_token=$bearerToken" `
+            /workspace/tests/security.hurl
+
+        $suitePassed = $true
+        Write-Output 'Bearer authentication suite passed.'
+    }
+    finally {
+        if ($containerStarted -and -not $suitePassed) {
+            Write-Output 'Authenticated test server logs:'
+            & docker logs $containerName 2>&1
+        }
+        if ($containerStarted) {
+            & docker rm --force $containerName 2>&1 | Out-Null
+        }
     }
 }
 
@@ -66,6 +161,7 @@ function Invoke-HttpSuite {
         Invoke-Docker run --detach `
             --name $containerName `
             --publish '127.0.0.1::3000' `
+            --env 'HTTP_HOST=0.0.0.0' `
             --volume $RepositoryMount `
             --workdir /tmp `
             --entrypoint sh `
@@ -153,10 +249,18 @@ function Invoke-HttpSuite {
 switch ($Suite) {
     'Lint' { Invoke-LintSuite }
     'Unit' { Invoke-UnitSuite }
-    'Http' { Invoke-HttpSuite }
+    'Http' {
+        Invoke-HttpSuite
+        Invoke-AuthSuite
+        & (Join-Path $PSScriptRoot 'persistence-recreate.ps1') `
+            -RepositoryRoot $RepositoryRoot
+    }
     'All' {
         Invoke-LintSuite
         Invoke-UnitSuite
         Invoke-HttpSuite
+        Invoke-AuthSuite
+        & (Join-Path $PSScriptRoot 'persistence-recreate.ps1') `
+            -RepositoryRoot $RepositoryRoot
     }
 }

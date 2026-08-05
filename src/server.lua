@@ -3,8 +3,23 @@ local script_path = source:sub(1, 1) == '@' and source:sub(2) or source
 local script_dir = script_path:match('^(.*[/\\])') or './'
 package.path = script_dir .. '?.lua;' .. package.path
 
+local auth_module = require('auth')
+local authorization = auth_module.new(os.getenv('API_BEARER_TOKEN'))
+local persistence = require('persistence')
+local persistence_settings = persistence.load()
+persistence.prepare(persistence_settings)
+if not authorization.enabled then
+    print('WARNING: HTTP bearer authentication is disabled; set API_BEARER_TOKEN in production')
+end
+
 box.cfg({
-    listen = os.getenv('TARANTOOL_LISTEN') or '0.0.0.0:3301',
+    checkpoint_count = persistence_settings.checkpoint_count,
+    checkpoint_interval = persistence_settings.checkpoint_interval,
+    listen = os.getenv('TARANTOOL_LISTEN') or '127.0.0.1:3301',
+    memtx_dir = persistence_settings.data_dir,
+    vinyl_dir = persistence_settings.data_dir,
+    wal_dir = persistence_settings.data_dir,
+    wal_mode = persistence_settings.wal_mode,
 })
 
 local digest = require('digest')
@@ -14,7 +29,7 @@ local jobs_module = require('jobs')
 
 local jobs_manager = jobs_module.new('jobs_space')
 local server = httpd.new(
-    os.getenv('HTTP_HOST') or '0.0.0.0',
+    os.getenv('HTTP_HOST') or '127.0.0.1',
     tonumber(os.getenv('HTTP_PORT')) or 3000
 )
 
@@ -30,13 +45,31 @@ local function json_response(status, body, additional_headers)
     }
 end
 
-local function error_response(status, code, message)
+local function error_response(status, code, message, additional_headers)
     return json_response(status, {
         error = {
             code = code,
             message = message,
         },
-    })
+    }, additional_headers)
+end
+
+local function protected(handler)
+    return function(req)
+        if not authorization.is_authorized(req.headers.authorization) then
+            return error_response(
+                401,
+                'unauthorized',
+                'A valid bearer token is required',
+                { ['www-authenticate'] = 'Bearer realm="tarantool-jobs-queue"' }
+            )
+        end
+        return handler(req)
+    end
+end
+
+local function protected_route(options, handler)
+    server:route(options, protected(handler))
 end
 
 local function is_json_object(value)
@@ -138,7 +171,7 @@ local function get_lease_token(req)
     return lease_token
 end
 
-server:route({ path = '/version', method = 'GET' }, function()
+protected_route({ path = '/version', method = 'GET' }, function()
     return json_response(200, {
         version = '1.0.0-beta',
         schema_version = jobs_manager.schema_version,
@@ -151,7 +184,7 @@ server:route({ path = '/health/live', method = 'GET' }, function()
     })
 end)
 
-server:route({ path = '/health/ready', method = 'GET' }, function()
+protected_route({ path = '/health/ready', method = 'GET' }, function()
     local readiness = jobs_manager.readiness()
     return json_response(readiness.ready and 200 or 503, {
         status = readiness.ready and 'ok' or 'not_ready',
@@ -169,7 +202,7 @@ server:route({ path = '/health/ready', method = 'GET' }, function()
     })
 end)
 
-server:route({ path = '/jobs', method = 'POST' }, function(req)
+protected_route({ path = '/jobs', method = 'POST' }, function(req)
     local payload, payload_error = parse_json_object(req)
     if payload_error ~= nil then
         return error_response(400, 'invalid_payload', payload_error)
@@ -210,7 +243,7 @@ server:route({ path = '/jobs', method = 'POST' }, function(req)
     })
 end)
 
-server:route({ path = '/jobs', method = 'GET' }, function(req)
+protected_route({ path = '/jobs', method = 'GET' }, function(req)
     if req:query_param('offset') ~= nil then
         return error_response(
             400,
@@ -248,7 +281,7 @@ server:route({ path = '/jobs', method = 'GET' }, function(req)
     })
 end)
 
-server:route({ path = '/jobs/claim', method = 'POST' }, function(req)
+protected_route({ path = '/jobs/claim', method = 'POST' }, function(req)
     local lease, lease_error = parse_number_query(
         req,
         'lease',
@@ -268,7 +301,7 @@ server:route({ path = '/jobs/claim', method = 'POST' }, function(req)
     return json_response(200, job)
 end)
 
-server:route({ path = '/jobs/:id/ack', method = 'POST' }, function(req)
+protected_route({ path = '/jobs/:id/ack', method = 'POST' }, function(req)
     local lease_token, token_error = get_lease_token(req)
     if token_error ~= nil then
         return token_error
@@ -277,7 +310,7 @@ server:route({ path = '/jobs/:id/ack', method = 'POST' }, function(req)
     return transition_response(job, transition_error, 'in-progress')
 end)
 
-server:route({ path = '/jobs/:id/release', method = 'POST' }, function(req)
+protected_route({ path = '/jobs/:id/release', method = 'POST' }, function(req)
     local lease_token, token_error = get_lease_token(req)
     if token_error ~= nil then
         return token_error
@@ -286,7 +319,7 @@ server:route({ path = '/jobs/:id/release', method = 'POST' }, function(req)
     return transition_response(job, transition_error, 'in-progress')
 end)
 
-server:route({ path = '/jobs/:id/fail', method = 'POST' }, function(req)
+protected_route({ path = '/jobs/:id/fail', method = 'POST' }, function(req)
     local lease_token, token_error = get_lease_token(req)
     if token_error ~= nil then
         return token_error
@@ -326,12 +359,12 @@ server:route({ path = '/jobs/:id/fail', method = 'POST' }, function(req)
     return transition_response(job, transition_error, 'in-progress')
 end)
 
-server:route({ path = '/jobs/:id/retry', method = 'POST' }, function(req)
+protected_route({ path = '/jobs/:id/retry', method = 'POST' }, function(req)
     local job, transition_error = jobs_manager.retry_job(req:stash('id'))
     return transition_response(job, transition_error, 'failed')
 end)
 
-server:route({ path = '/jobs/:id', method = 'GET' }, function(req)
+protected_route({ path = '/jobs/:id', method = 'GET' }, function(req)
     local job = jobs_manager.get_job_by_id(req:stash('id'))
     if job == nil then
         return error_response(404, 'job_not_found', 'Job was not found')
@@ -339,7 +372,7 @@ server:route({ path = '/jobs/:id', method = 'GET' }, function(req)
     return json_response(200, job)
 end)
 
-server:route({ path = '/jobs/:id', method = 'DELETE' }, function(req)
+protected_route({ path = '/jobs/:id', method = 'DELETE' }, function(req)
     jobs_manager.delete_job_by_id(req:stash('id'))
     return { status = 204 }
 end)

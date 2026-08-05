@@ -1,5 +1,5 @@
 ISSUES.md
 .rocks/
+/data/
 *.snap
 *.xlog
-

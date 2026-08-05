@@ -24,6 +24,23 @@ These instructions apply to the entire repository.
 - Idempotent creation must return one job under concurrent requests sharing a key.
 - Cursor pagination must not serialize floating-point timestamps as resume keys; resolve the cursor job to recover its exact indexed key.
 
+## Security invariants
+
+- Keep HTTP and the native Tarantool protocol bound to loopback unless an explicit deployment requires remote access.
+- Never publish the native Tarantool port in the default Compose configuration.
+- When bearer authentication is configured, protect every route except `/health/live`.
+- Reject invalid authentication configuration before opening database or HTTP listeners.
+- Compare bearer credentials without early-exit string equality.
+- Do not log bearer tokens or accept them through query parameters.
+
+## Persistence invariants
+
+- Store memtx snapshots, WAL files, and Vinyl data under the configured data directory.
+- Keep WAL enabled; only `write` and `fsync` are accepted durability modes.
+- Preserve the Compose data volume unless deletion is explicitly requested.
+- When changing startup, storage, images, or Compose, prove recovery with a fresh container attached to the original test volume.
+- Treat named volumes as local durability, not as backups or high availability.
+
 ## Dependencies
 
 - Declare Lua dependencies in the project rockspec.
@@ -41,6 +58,7 @@ These instructions apply to the entire repository.
 - Exercise create, retrieve, claim, release, reclaim, and acknowledge when changing queue behavior.
 - Include a competing-consumer test when changing claim or transaction logic.
 - Run lease/retry, concurrent idempotency, cursor pagination, and schema migration tests when changing the data model or lifecycle.
+- Run `tests/persistence-recreate.ps1` when changing persistence or container behavior.
 - If the required runtime is unavailable, report which static checks ran and what remains unverified.
 
 ## Documentation
