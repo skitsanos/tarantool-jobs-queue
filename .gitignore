@@ -3,3 +3,5 @@ ISSUES.md
 /data/
 *.snap
 *.xlog
+__pycache__/
+*.pyc

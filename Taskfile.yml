@@ -11,6 +11,7 @@ tasks:
     cmds:
       - docker pull tarantool/tarantool:3.8.0
       - docker pull ghcr.io/orange-opensource/hurl:8.0.1
+      - docker pull redocly/cli:1.34.5
 
   install:
     desc: Install the application dependencies declared by the rockspec

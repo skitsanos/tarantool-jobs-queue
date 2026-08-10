@@ -26,6 +26,7 @@ local digest = require('digest')
 local httpd = require('http.server')
 local json = require('json')
 local jobs_module = require('jobs')
+local metadata = require('metadata')
 
 local jobs_manager = jobs_module.new('jobs_space')
 local server = httpd.new(
@@ -173,7 +174,7 @@ end
 
 protected_route({ path = '/version', method = 'GET' }, function()
     return json_response(200, {
-        version = '1.0.0-beta',
+        version = metadata.api_version,
         schema_version = jobs_manager.schema_version,
     })
 end)

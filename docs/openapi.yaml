@@ -1,0 +1,565 @@
+openapi: 3.1.0
+info:
+  title: Tarantool Jobs Queue API
+  version: 1.0.0-beta
+  description: |
+    A persistent, lease-based, at-least-once jobs queue. A claimed attempt must be
+    completed with its per-attempt `Lease-Token`; stale or expired workers receive a
+    conflict response.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://127.0.0.1:3000
+    description: Default local server
+security:
+  - bearerAuth: []
+tags:
+  - name: Jobs
+    description: Create, inspect, claim, and transition queue jobs.
+  - name: Service
+    description: Process health and version metadata.
+paths:
+  /health/live:
+    get:
+      tags: [Service]
+      operationId: getLiveness
+      summary: Check process liveness
+      description: This route is public and does not inspect database state.
+      security: []
+      responses:
+        "200":
+          description: The HTTP process is responding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Liveness"
+  /health/ready:
+    get:
+      tags: [Service]
+      operationId: getReadiness
+      summary: Check schema and write readiness
+      description: |
+        Checks the migration version, required fields and indexes, read-write state,
+        and a transactional write that is rolled back.
+      responses:
+        "200":
+          description: The service is ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: A schema or storage readiness check failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+  /version:
+    get:
+      tags: [Service]
+      operationId: getVersion
+      summary: Get API and schema versions
+      responses:
+        "200":
+          description: Version metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Version"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /jobs:
+    post:
+      tags: [Jobs]
+      operationId: createJob
+      summary: Create a job
+      description: |
+        When `Idempotency-Key` is supplied, concurrent and later requests sharing the
+        key return the first job rather than creating another one.
+      parameters:
+        - $ref: "#/components/parameters/MaxAttempts"
+        - $ref: "#/components/parameters/Delay"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobPayload"
+      responses:
+        "201":
+          description: A new job was created.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "200":
+          description: The job associated with the idempotency key was replayed.
+          headers:
+            Idempotency-Replayed:
+              $ref: "#/components/headers/IdempotencyReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      tags: [Jobs]
+      operationId: listJobs
+      summary: List jobs using cursor pagination
+      parameters:
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A stable FIFO page of jobs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /jobs/claim:
+    post:
+      tags: [Jobs]
+      operationId: claimJob
+      summary: Atomically claim the next available job
+      description: |
+        Recovers expired leases before selecting the oldest available pending job.
+        A successful claim increments `attempts` and returns an in-progress job with
+        a unique fencing token.
+      parameters:
+        - $ref: "#/components/parameters/Lease"
+      responses:
+        "200":
+          description: A job was claimed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimedJob"
+        "204":
+          description: No job is currently available.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /jobs/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      tags: [Jobs]
+      operationId: getJob
+      summary: Get a job
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Jobs]
+      operationId: deleteJob
+      summary: Delete a job idempotently
+      responses:
+        "204":
+          description: The job is absent after the request.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /jobs/{jobId}/ack:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+      - $ref: "#/components/parameters/LeaseToken"
+    post:
+      tags: [Jobs]
+      operationId: acknowledgeJob
+      summary: Complete a claimed attempt
+      responses:
+        "200":
+          description: The updated done job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/TransitionConflict"
+  /jobs/{jobId}/fail:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+      - $ref: "#/components/parameters/LeaseToken"
+    post:
+      tags: [Jobs]
+      operationId: failJob
+      summary: Report a retryable or permanent failure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Failure"
+      responses:
+        "200":
+          description: The updated pending or failed job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/TransitionConflict"
+  /jobs/{jobId}/release:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+      - $ref: "#/components/parameters/LeaseToken"
+    post:
+      tags: [Jobs]
+      operationId: releaseJob
+      summary: Release a claimed attempt immediately
+      description: Returns the job to pending, or fails it if attempts are exhausted.
+      responses:
+        "200":
+          description: The updated pending or failed job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/TransitionConflict"
+  /jobs/{jobId}/retry:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    post:
+      tags: [Jobs]
+      operationId: retryJob
+      summary: Reset a failed job to pending
+      responses:
+        "200":
+          description: The updated pending job with attempts reset to zero.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/TransitionConflict"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Enabled when the service is configured with `API_BEARER_TOKEN`.
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      description: Job identifier returned by the service.
+      schema:
+        type: string
+        format: uuid
+    LeaseToken:
+      name: Lease-Token
+      in: header
+      required: true
+      description: Per-attempt fencing token returned by a successful claim.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Stable producer key used to replay the first matching creation.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+    MaxAttempts:
+      name: max_attempts
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 3
+    Delay:
+      name: delay
+      in: query
+      required: false
+      description: Seconds before the new job becomes claimable.
+      schema:
+        type: number
+        minimum: 0
+        maximum: 86400
+        default: 0
+    Lease:
+      name: lease
+      in: query
+      required: false
+      description: Lease duration in seconds. Leases cannot currently be renewed.
+      schema:
+        type: number
+        minimum: 0.1
+        maximum: 3600
+        default: 60
+    Status:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/JobStatus"
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque `next_cursor` from the preceding page for the same status.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+  headers:
+    IdempotencyReplayed:
+      description: Whether an existing job was returned for the idempotency key.
+      schema:
+        type: string
+        enum: ["true", "false"]
+  responses:
+    BadRequest:
+      description: A body, query parameter, cursor, or required lease token is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Bearer authentication is enabled and the credential is absent or invalid.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          description: Bearer authentication challenge.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: The job does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TransitionConflict:
+      description: The job state, lease token, or lease expiry prevents the transition.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    JobStatus:
+      type: string
+      enum: [pending, in-progress, done, failed]
+    JobPayload:
+      type: object
+      additionalProperties: true
+      examples:
+        - kind: send-email
+          recipient: person@example.com
+    Job:
+      type: object
+      required:
+        - job_id
+        - status
+        - payload
+        - created_at
+        - updated_at
+        - available_at
+        - lease_until
+        - lease_token
+        - attempts
+        - max_attempts
+        - last_error
+        - idempotency_key
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        payload:
+          $ref: "#/components/schemas/JobPayload"
+        created_at:
+          type: number
+          description: Unix timestamp in seconds.
+        updated_at:
+          type: number
+          description: Unix timestamp in seconds.
+        available_at:
+          type: number
+          description: Unix timestamp after which the job may be claimed.
+        lease_until:
+          type: [number, "null"]
+          description: Unix timestamp at which the current processing lease expires.
+        lease_token:
+          type: [string, "null"]
+          description: Fencing token populated only while the job is in progress.
+        attempts:
+          type: integer
+          minimum: 0
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 100
+        last_error:
+          type: [string, "null"]
+        idempotency_key:
+          type: [string, "null"]
+    ClaimedJob:
+      allOf:
+        - $ref: "#/components/schemas/Job"
+        - type: object
+          required: [lease_token, lease_until]
+          properties:
+            status:
+              const: in-progress
+            lease_token:
+              type: string
+              minLength: 1
+            lease_until:
+              type: number
+    JobPage:
+      type: object
+      required: [total, limit, next_cursor, data]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        next_cursor:
+          type: [string, "null"]
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
+    Failure:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        retry:
+          type: boolean
+          default: true
+        retry_delay:
+          type: number
+          minimum: 0
+          maximum: 86400
+          default: 0
+      additionalProperties: true
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    Liveness:
+      type: object
+      required: [status]
+      properties:
+        status:
+          const: ok
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, not_ready]
+        checks:
+          type: object
+          required: [schema, storage]
+          properties:
+            schema:
+              type: object
+              required: [ready, version, expected_version]
+              properties:
+                ready:
+                  type: boolean
+                version:
+                  type: [integer, "null"]
+                expected_version:
+                  type: integer
+            storage:
+              type: object
+              required: [writable, write_probe]
+              properties:
+                writable:
+                  type: boolean
+                write_probe:
+                  type: boolean
+    Version:
+      type: object
+      required: [version, schema_version]
+      properties:
+        version:
+          type: string
+          example: 1.0.0-beta
+        schema_version:
+          type: integer
+          example: 3

@@ -5,6 +5,14 @@ Content-Type: application/json; charset=utf-8
 jsonpath "$.status" == "ok"
 
 
+GET http://localhost:{{PORT}}/version
+HTTP 200
+Content-Type: application/json; charset=utf-8
+[Asserts]
+jsonpath "$.version" == "1.0.0-beta"
+jsonpath "$.schema_version" == 3
+
+
 GET http://localhost:{{PORT}}/health/ready
 HTTP 200
 Content-Type: application/json; charset=utf-8

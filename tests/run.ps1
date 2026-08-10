@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $TarantoolImage = 'tarantool/tarantool:3.8.0'
 $HurlImage = 'ghcr.io/orange-opensource/hurl:8.0.1'
+$RedoclyImage = 'redocly/cli:1.34.5'
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $RepositoryMount = "${RepositoryRoot}:/workspace:ro"
 
@@ -41,11 +42,21 @@ function Invoke-LintSuite {
         /workspace/tests/get-jobs.hurl `
         /workspace/tests/restart-recovery.hurl `
         /workspace/tests/security.hurl
+
+    Write-Output 'Checking the OpenAPI document...'
+    Invoke-Docker run --rm `
+        --volume $RepositoryMount `
+        $RedoclyImage `
+        lint `
+        /workspace/docs/openapi.yaml `
+        --skip-rule `
+        operation-4xx-response
 }
 
 function Invoke-UnitSuite {
     foreach ($testFile in @(
         'auth-unit.lua',
+        'metadata-unit.lua',
         'persistence-unit.lua',
         'jobs-unit.lua',
         'schema-migrations.lua'

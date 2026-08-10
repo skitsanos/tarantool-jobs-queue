@@ -23,6 +23,7 @@ build = {
         auth = 'src/auth.lua',
         persistence = 'src/persistence.lua',
         jobs = 'src/jobs.lua',
+        metadata = 'src/metadata.lua',
         migrations = 'src/migrations.lua',
     },
 }
