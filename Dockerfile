@@ -1,4 +1,4 @@
-FROM tarantool/tarantool:3.8.1
+FROM tarantool/tarantool:3.9.0
 
 RUN apt-get update -qq \
     && apt-get install -y -qq --no-install-recommends tarantool-http=1:1.9.0.0-1 \
